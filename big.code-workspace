@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../stm32"
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"irq.h": "c",
+			"stm32.h": "c",
+			"stm32f4xx.h": "c"
+		}
+	}
+}

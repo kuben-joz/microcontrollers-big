@@ -1,0 +1,25 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/home/jakub/Documents/microcontrollers/stm32/inc/*",
+                "/home/jakub/Documents/microcontrollers/stm32/CMSIS/Include/*",
+                "/home/jakub/Documents/microcontrollers/stm32/CMSIS/Device/ST/STM32F4xx/Include/*"
+            ],
+            "defines": [
+                "STM32F411xE"
+            ],
+            "compilerPath": "/usr/bin/arm-none-eabi-gcc",
+            "cStandard": "gnu11",
+            "cppStandard": "gnu++11",
+            "intelliSenseMode": "linux-gcc-arm",
+            "compilerArgs": [
+                "-mthumb ",
+                "-mcpu=cortex-m4"
+            ]
+        }
+    ],
+    "version": 4
+}
