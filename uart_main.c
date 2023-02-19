@@ -7,6 +7,16 @@
 #include "buffer.h"
 #include "delay.h"
 
+//****************** status led ************************
+#define GreenLEDon() \
+    GREEN_LED_GPIO->BSRR = 1 << (GREEN_LED_PIN + 16)
+#define GreenLEDoff() \
+    GREEN_LED_GPIO->BSRR = 1 << GREEN_LED_PIN
+#define GreenLEDflip() \
+    GREEN_LED_GPIO->BSRR = 1 << (GREEN_LED_PIN + 16 * (1 & (GREEN_LED_GPIO->ODR >> GREEN_LED_PIN)))
+#define GREEN_LED_GPIO GPIOA
+#define GREEN_LED_PIN 7
+
 // **************** USART ******************************
 
 #define USART_Mode_Rx_Tx (USART_CR1_RE | USART_CR1_TE)
@@ -41,41 +51,25 @@
 
 // **************  last handled interrupt to avoid starvation *********
 
-char dma_out[OUT_MSG_MAX_LEN] = {};
-
 buffer out_buff;
 
 uint16_t temp_val;
 
 // ***************** Code *********************************
 
-// after send
-void DMA1_Stream6_IRQHandler()
-{
-    /* Odczytaj zgłoszone przerwania DMA1. */
-    uint32_t isr = DMA1->HISR;
-    if (isr & DMA_HISR_TCIF6)
-    {
-        memset(dma_out, '\0', OUT_MSG_MAX_LEN);
-        /* Obsłuż zakończenie transferu
-        w strumieniu 6. */
-        DMA1->HIFCR = DMA_HIFCR_CTCIF6;
-    }
-}
-
 int main()
 {
-    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN |
-                    RCC_AHB1ENR_GPIOBEN |
-                    RCC_AHB1ENR_GPIOCEN |
-                    RCC_AHB1ENR_DMA1EN;
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
     RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
 
-    // for ext. interrupts
-    RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
-
     __NOP();
     __NOP();
+    GreenLEDoff();
+    GPIOoutConfigure(GREEN_LED_GPIO,
+                     GREEN_LED_PIN,
+                     GPIO_OType_PP,
+                     GPIO_Low_Speed,
+                     GPIO_PuPd_NOPULL);
     // pull up to avoid random transfer at boot
     GPIOafConfigure(GPIOA,
                     2,
@@ -92,58 +86,54 @@ int main()
 
     USART2->BRR = (PCLK1_HZ + (BAUD_RATE / 2U)) / BAUD_RATE;
 
-    // enable dma
-
-    USART2->CR3 = USART_CR3_DMAT;
-
-    // config DMA tx
-
-    // 4U becvasue channel 4, why << 25? becaues of chsel register bits 25-27
-    DMA1_Stream6->CR = 4U << 25 |
-                       DMA_SxCR_PL_1 |
-                       DMA_SxCR_MINC |
-                       DMA_SxCR_DIR_0 |
-                       DMA_SxCR_TCIE;
-
-    // data register to write to
-    DMA1_Stream6->PAR = (uint32_t)&USART2->DR;
-
-    DMA1->HIFCR = DMA_HIFCR_CTCIF6;
-
-    NVIC_SetPriorityGrouping(3);
-
-    uint32_t dma_priority = NVIC_EncodePriority(3, 14, 0);
-
-    NVIC_SetPriority(DMA1_Stream6_IRQn, dma_priority);
-
-    NVIC_EnableIRQ(DMA1_Stream6_IRQn);
-
-    // starts listening here
     USART2->CR1 |= USART_Enable;
+
     adc_run(&temp_val);
 
+    //int j = 0;
+    int i = 3;
+    char out[3];
+    memset(out, '\0', 3);
+    uint16_t send_val;
+    int val_ready = 0;
     while (1)
     {
-        memset(dma_out, '\0', OUT_MSG_MAX_LEN);
-        uint16_t send_val = adc_calculate_temp(temp_val);
-        dma_out[1] = (send_val % 10) + '0';
-        send_val /= 10;
-        dma_out[0] = (send_val % 10) + '0';
-        dma_out[2] = '\n';
-        //dma_out[1] = temp_val;
-        //temp_val = temp_val >> 8;
-        //dma_out[0] = temp_val;
-        //dma_out[2] = '\n';
 
-        if ((DMA1_Stream6->CR & DMA_SxCR_EN) == 0 &&
-            (DMA1->HISR & DMA_HISR_TCIF6) == 0)
+        if ((USART2->SR & USART_SR_TXE))
         {
-            DMA1_Stream6->M0AR = (uint32_t)dma_out;
-            DMA1_Stream6->NDTR = strlen(dma_out);
-            DMA1_Stream6->CR |= DMA_SxCR_EN;
+            if (i == 3 && val_ready)
+            {
+                send_val = adc_calculate_temp(temp_val);
+                // send_val = temp_val;
+                out[1] = (send_val % 10) + '0';
+                send_val /= 10;
+                out[0] = (send_val % 10) + '0';
+                out[2] = '\n';
+                Delay(1000000);
+                i = 0;
+                val_ready = 0;
+            }
+            else if(i < 3)
+            {
+                USART2->DR = out[i++];
+            }
         }
-        Delay(1000000);
+        else
+        {
+            Delay(1000000);
+        }
+        if((ADC1->SR & ADC_SR_EOC) && i==3) {
+            temp_val = ADC1->DR;
+            val_ready = 1;
+            ADC1->CR2 |= ADC_CR2_SWSTART;
+        }
+        if((ADC1->SR & ADC_SR_OVR)) {
+            ADC1->SR &= ~ADC_SR_OVR;
+            ADC1->CR2 |= ADC_CR2_SWSTART;
+            GreenLEDflip();
+        }
     }
 
+    // todo handle requests with RXNEIE
     return 1;
 }

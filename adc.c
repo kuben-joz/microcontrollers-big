@@ -27,24 +27,24 @@ int adc_init(void)
 
 #ifdef GPIOA_4_CONFLICT
 #error GPIOA 4 used for mulitple things
-#define GPIOA_4_CONFLICT
+#define GPIOA_4_CONFLIC
 #endif
     GPIOainConfigure(GPIOA, 4);
 
     // reference 11.12 in rm0383 for mappings below
 
     // todo adjust this to be in optimal range
-    ADC1_COMMON->CCR &= ~ADC_CCR_ADCPRE; // set prescaler to 2
+    ADC1_COMMON->CCR |= 2UL << ADC_CCR_ADCPRE_Pos; // set prescaler to 6
 
     ADC1->CR1 &= ~ADC_CR1_RES; // set resolution to 12 bits
-    ADC1->CR1 |= ADC_CR1_SCAN; // enable scan mode
+    //ADC1->CR1 |= ADC_CR1_SCAN; // enable scan mode
 
-    ADC1->CR2 |= ADC_CR2_CONT;   // continuous conversion
-    ADC1->CR2 |= ADC_CR2_DMA;    // enable DMA mode
-    ADC1->CR2 |= ADC_CR2_DDS;    // keep issuing dma requests
+    //ADC1->CR2 |= ADC_CR2_CONT;   // continuous conversion
+    //ADC1->CR2 |= ADC_CR2_DMA;    // enable DMA mode
+    //ADC1->CR2 |= ADC_CR2_DDS;    // keep issuing dma requests
     ADC1->CR2 &= ~ADC_CR2_ALIGN; // right alingmnet
     // todo check if this is neccesary or just larger buffer
-    ADC1->CR2 |= ADC_CR2_EOCS; // eocs interupt after every conversion
+    //ADC1->CR2 |= ADC_CR2_EOCS; // eocs interupt after every conversion
 
     ADC1->SQR1 &= ~ADC_SQR1_L; // set number of measurments to 1
 
@@ -63,8 +63,7 @@ int adc_enable(void)
     ADC1->CR2 |= ADC_CR2_ADON; // enable adc
     // todo not sure if it's these or those above that are neccessary
     //  I've seen this in example code
-    __NOP();
-    __NOP();
+    Delay(1000);
     return 0;
 }
 
@@ -74,7 +73,7 @@ int adc_start(void)
     // start the conversion
     ADC1->SR = 0;
     // todo chekc if this trigger is req.
-    ADC1->CR2 |= (1UL << ADC_CR2_EXTEN_Pos); // rising edge trigger detect
+    // ADC1->CR2 |= (1UL << ADC_CR2_EXTEN_Pos); // rising edge trigger detect
     // todo add timer config EXTSEL
     ADC1->CR2 |= ADC_CR2_SWSTART; // regular channel start covnersion
     return 0;
@@ -96,7 +95,7 @@ int adc_dma_init(uint16_t transfer_num, uint32_t src, uint32_t dest)
     DMA2_Stream0->CR |= DMA_SxCR_CIRC;   // circular mode
     // DMA2_Stream0->CR |= DMA_SxCR_MINC;  // auto memory increment
     //  todo change once strai sensor is added
-    DMA2_Stream0->CR &= ~DMA_SxCR_MINC;
+    DMA2_Stream0->CR |= DMA_SxCR_MINC;             // memory address increment when we have more than one device
     DMA2_Stream0->CR &= ~DMA_SxCR_PINC;            // always use same register in adc
     DMA2_Stream0->CR |= 1UL << DMA_SxCR_PSIZE_Pos; // 16 bits on both sides
     DMA2_Stream0->CR |= 1UL << DMA_SxCR_MSIZE_Pos; // 16 bits on both sides
@@ -118,15 +117,15 @@ int adc_run(uint16_t *data)
 {
     adc_init();
     adc_enable();
-    adc_dma_init(1U, (uint32_t)&ADC1->DR, (uint32_t)data);
-    adc_dma_start();
+    //adc_dma_init(3U, (uint32_t)&ADC1->DR, (uint32_t)data);
+    //adc_dma_start();
     adc_start();
 
     return 0;
 }
 
-int adc_calculate_temp(uint16_t val)
+int32_t adc_calculate_temp(uint16_t val)
 {
-    int16_t res = 159.649273 - 0.0689190815 * val;
-    return res;
+    float res = 159.649273 - 0.0689190815 * val;
+    return (int32_t)res;
 }
