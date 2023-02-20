@@ -4,6 +4,7 @@
 #include <irq.h>
 #include <delay.h>
 
+
 /*The ADC is powered on by setting the ADON bit in the ADC_CR2 register.
 
 Conversion starts when either the SWSTART or the JSWSTART bit is set.
@@ -39,9 +40,9 @@ int adc_init(void)
     ADC1->CR1 &= ~ADC_CR1_RES; // set resolution to 12 bits
     //ADC1->CR1 |= ADC_CR1_SCAN; // enable scan mode
 
-    //ADC1->CR2 |= ADC_CR2_CONT;   // continuous conversion
-    //ADC1->CR2 |= ADC_CR2_DMA;    // enable DMA mode
-    //ADC1->CR2 |= ADC_CR2_DDS;    // keep issuing dma requests
+    ADC1->CR2 |= ADC_CR2_CONT;   // continuous conversion
+    ADC1->CR2 |= ADC_CR2_DMA;    // enable DMA mode
+    ADC1->CR2 |= ADC_CR2_DDS;    // keep issuing dma requests
     ADC1->CR2 &= ~ADC_CR2_ALIGN; // right alingmnet
     // todo check if this is neccesary or just larger buffer
     //ADC1->CR2 |= ADC_CR2_EOCS; // eocs interupt after every conversion
@@ -71,7 +72,7 @@ int adc_start(void)
 {
 
     // start the conversion
-    ADC1->SR = 0;
+    //ADC1->SR = 0;
     // todo chekc if this trigger is req.
     // ADC1->CR2 |= (1UL << ADC_CR2_EXTEN_Pos); // rising edge trigger detect
     // todo add timer config EXTSEL
@@ -109,16 +110,16 @@ int adc_dma_init(uint16_t transfer_num, uint32_t src, uint32_t dest)
 
 int adc_dma_start(void)
 {
-    DMA1_Stream0->CR |= DMA_SxCR_EN;
+    DMA2_Stream0->CR |= DMA_SxCR_EN;
     return 0;
 }
 
-int adc_run(uint16_t *data)
+int adc_run(uint16_t transfer_num, uint32_t src, uint32_t dest)
 {
     adc_init();
     adc_enable();
-    //adc_dma_init(3U, (uint32_t)&ADC1->DR, (uint32_t)data);
-    //adc_dma_start();
+    adc_dma_init(transfer_num, src, dest);
+    adc_dma_start();
     adc_start();
 
     return 0;
@@ -128,4 +129,14 @@ int32_t adc_calculate_temp(uint16_t val)
 {
     float res = 159.649273 - 0.0689190815 * val;
     return (int32_t)res;
+}
+
+int adc_restart(uint16_t transfer_num, uint32_t dest) {
+    DMA2_Stream0->CR &= ~DMA_SxCR_EN;
+    ADC1->SR &= ~ADC_SR_OVR;
+    DMA2_Stream0->NDTR |= transfer_num;
+    DMA2_Stream0->M0AR = dest;  
+    DMA2_Stream0->CR |= DMA_SxCR_EN;
+    ADC1->CR2 |= ADC_CR2_SWSTART; 
+    return 0;
 }

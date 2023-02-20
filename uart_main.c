@@ -53,7 +53,7 @@
 
 buffer out_buff;
 
-uint16_t temp_val;
+uint16_t temp_val[3];
 
 // ***************** Code *********************************
 
@@ -88,7 +88,10 @@ int main()
 
     USART2->CR1 |= USART_Enable;
 
-    adc_run(&temp_val);
+    uint16_t transfer_num = 3;
+    
+
+    adc_run(transfer_num, (uint32_t)&ADC1->DR, (uint32_t)temp_val);
 
     //int j = 0;
     int i = 3;
@@ -101,9 +104,9 @@ int main()
 
         if ((USART2->SR & USART_SR_TXE))
         {
-            if (i == 3 && val_ready)
+            if (i == 3)
             {
-                send_val = adc_calculate_temp(temp_val);
+                send_val = adc_calculate_temp(temp_val[1]);
                 // send_val = temp_val;
                 out[1] = (send_val % 10) + '0';
                 send_val /= 10;
@@ -122,14 +125,9 @@ int main()
         {
             Delay(1000000);
         }
-        if((ADC1->SR & ADC_SR_EOC) && i==3) {
-            temp_val = ADC1->DR;
-            val_ready = 1;
-            ADC1->CR2 |= ADC_CR2_SWSTART;
-        }
         if((ADC1->SR & ADC_SR_OVR)) {
-            ADC1->SR &= ~ADC_SR_OVR;
-            ADC1->CR2 |= ADC_CR2_SWSTART;
+            adc_restart(transfer_num, (uint32_t)temp_val);
+            delay(1000);
             GreenLEDflip();
         }
     }
