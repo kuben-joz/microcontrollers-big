@@ -8,6 +8,7 @@
 #define EndCalibrationCode -8
 #define TareCode -9
 #define RequestADCValCode -10
+#define CoefficentsCode -11
 
 
 #define OUT_MSG_LEN 6
