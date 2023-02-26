@@ -40,6 +40,8 @@ float average_weight = 0;
 
 int weight_send = 0;
 
+int adc_send = 0;
+
 float coeff[3];
 
 uint32_t dma_priority;
@@ -105,14 +107,20 @@ void stopMeasurements()
 
 void startCalibration()
 {
-    coeff[0] = 159.649273;
-    coeff[1] = -0.0689190815;
-    coeff[2] = 0.0;
-    calibration_store_polynomial(coeff);
+    if (!send_data)
+    {
+        needs_adc_start = 1;
+        send_data = 1;
+    }
 }
 
 void endCalibration()
 {
+    if (send_data)
+    {
+        send_data = 0;
+        adc_stop();
+    }
 }
 
 void setNewMessage(int button_code, int new_state_code, char *msg)
@@ -142,6 +150,8 @@ void handleInput(char command)
     case TareCode:
         needs_tare = 1;
         break;
+    case RequestADCValCode:
+        adc_send = 1;
     }
 }
 
@@ -168,6 +178,10 @@ void DMA2_Stream7_IRQHandler()
             DMA2_Stream7->NDTR = OUT_MSG_LEN;
             DMA2_Stream7->CR |= DMA_SxCR_EN;
         }
+        else if (adc_send)
+        {
+            adc_send = 0;
+        }
     }
 }
 
@@ -192,14 +206,13 @@ void DMA2_Stream5_IRQHandler()
 void TIM3_IRQHandler(void)
 {
     uint32_t it_status = TIM3->SR & TIM3->DIER;
-    irq_level_t prot_level = IRQprotect(dma_priority);
     if (it_status & TIM_SR_UIF)
     {
         TIM3->SR &= ~TIM_SR_UIF;
+        irq_level_t prot_level = IRQprotect(dma_priority);
         if ((DMA2_Stream7->CR & DMA_SxCR_EN) == 0 &&
             (DMA2->HISR & DMA_HISR_TCIF7) == 0)
         {
-
             IRQunprotect(prot_level);
             uint16_t adc_val_temp = 0;
             uint16_t adc_val_weight = 0;
@@ -259,7 +272,39 @@ int main()
             adc_restart(RESAMPLING * 2, (uint32_t)measurements);
             needs_adc_start = 0;
         }
-        __WFI();
+        irq_level_t prot_level = IRQprotect(dma_priority);
+        if ((adc_send &&
+             DMA2_Stream7->CR & DMA_SxCR_EN) == 0 &&
+            (DMA2->HISR & DMA_HISR_TCIF7) == 0)
+        {
+            adc_send = 0;
+            IRQunprotect(prot_level);
+            uint16_t adc_val_weight = 0;
+            for (int i = 0; i < RESAMPLING; i++)
+            {
+                adc_val_weight += measurements[2 * i + 1];
+            }
+            adc_val_weight /= RESAMPLING;
+            // todo change back
+            // float average_temp = adc_calculate_temp(adc_val_temp);
+            average_weight = adc_val_weight;
+            // todo change tare to be on weight not temp
+            char *temp_val = (char *)&average_weight;
+            dma_out[0] = ADCValCode;
+            for (int i = 1; i < 5; i++)
+            {
+                dma_out[5 - i] = temp_val[i - 1];
+            }
+            dma_out[5] = 0;
+            DMA2_Stream7->M0AR = (uint32_t)dma_out;
+            DMA2_Stream7->NDTR = OUT_MSG_LEN;
+            DMA2_Stream7->CR |= DMA_SxCR_EN;
+        }
+        else
+        {
+            IRQunprotect(prot_level);
+        }
+        //__WFI();
     }
 
     return 1;
