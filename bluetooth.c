@@ -115,8 +115,6 @@ int bluetooth_dma_init()
     DMA2->HIFCR = DMA_HIFCR_CTCIF7 |
                   DMA_HIFCR_CTCIF5;
 
-    NVIC_SetPriorityGrouping(3);
-
     uint32_t dma_priority = NVIC_EncodePriority(3, 14, 0);
 
     NVIC_SetPriority(DMA2_Stream7_IRQn, dma_priority);

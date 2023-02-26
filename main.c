@@ -42,15 +42,54 @@ int weight_send = 0;
 
 float coeff[3];
 
+uint32_t dma_priority;
+
 // ***************** Code *********************************
+
+int timer_init()
+{
+    RCC->APB1ENR |= RCC_APB1ENR_TIM3EN;
+    TIM3->CR1 |= TIM_CR1_URS;  // only update on overflow, we are counting up
+    TIM3->CR1 |= TIM_CR1_UDIS; // no updates for now
+    TIM3->CR1 &= ~TIM_CR1_DIR; // counting up
+    TIM3->PSC = 16000UL - 1;   // 1000hz
+    TIM3->ARR = 50UL;          // 20 updates a second
+    TIM3->CNT = 0UL;           // start at 0
+    TIM3->EGR |= TIM_EGR_UG;   // init everything
+
+    // enable interrupts
+    TIM3->CCR1 = 51UL;          // enable interrupt on overflow
+    TIM3->SR &= ~TIM_SR_UIF;    // zero out flags initially
+    TIM3->DIER |= TIM_DIER_UIE; // set interrupt only on cc1
+
+    uint32_t tim_priority = NVIC_EncodePriority(3, 15, 0); // allow this to be preemepted by DMA
+    NVIC_SetPriority(TIM3_IRQn, tim_priority);
+    NVIC_EnableIRQ(TIM3_IRQn);
+
+    TIM3->CR1 |= TIM_CR1_CEN; // enable counter
+    return 0;
+}
+
+int timer_enable()
+{
+    TIM3->CR1 &= ~TIM_CR1_UDIS;
+    return 0;
+}
+
+int timer_disable()
+{
+    TIM3->CR1 |= TIM_CR1_UDIS;
+    return 0;
+}
 
 void startMeasurements()
 {
     if (!send_data)
     {
         send_data = 1;
-        //adc_restart(RESAMPLING * 2, (uint32_t)measurements);
+        // adc_restart(RESAMPLING * 2, (uint32_t)measurements);
         needs_adc_start = 1;
+        timer_enable();
     }
 }
 
@@ -59,6 +98,7 @@ void stopMeasurements()
     if (send_data)
     {
         send_data = 0;
+        timer_disable();
         adc_stop();
     }
 }
@@ -108,7 +148,7 @@ void handleInput(char command)
 // after send
 void DMA2_Stream7_IRQHandler()
 {
-    /* Odczytaj zgłoszone przerwania DMA1. */
+    // check if transfer done
     uint32_t isr = DMA2->HISR;
     if (isr & DMA_HISR_TCIF7)
     {
@@ -134,6 +174,7 @@ void DMA2_Stream7_IRQHandler()
 // after recieve
 void DMA2_Stream5_IRQHandler()
 {
+    // check if transfer done
     uint32_t isr = DMA2->HISR;
     if (isr & DMA_HISR_TCIF5)
     {
@@ -148,52 +189,16 @@ void DMA2_Stream5_IRQHandler()
     }
 }
 
-int timer_init() {
-    RCC->APB1ENR |= RCC_APB1ENR_TIM3EN;
-    TIM3->CR1 |= TIM_CR1_URS; //only update on overflow, we are counting up
-    TIM3->CR1 &= ~TIM_CR1_DIR; //counting up
-    TIM3->PSC = 16000UL; // 1000hz
-    TIM3->ARR = 0UL; // start at 0
-    TIM3->EGR |= TIM_EGR_UG;
-
-
-
-
-    TIM3->CR1 |= TIM_CR1_CEN;
-    return 0;
-}
-
-int timer_enable() {
-
-}
-
-int timer_disable() {
-
-}
-
-int main()
+void TIM3_IRQHandler(void)
 {
-
-    timer_init();
-
-    calibration_init();
-    calibration_retrieve_polynomial(coeff);
-    adc_run(RESAMPLING * 2, (uint32_t)measurements);
-    uint32_t dma_priority = bluetooth_run(&dma_in);
-
-    while (1)
+    uint32_t it_status = TIM3->SR & TIM3->DIER;
+    irq_level_t prot_level = IRQprotect(dma_priority);
+    if (it_status & TIM_SR_UIF)
     {
-
-        // todo disable interrupts for recieveing button inputs
-        irq_level_t prot_level = IRQprotect(dma_priority);
-        if (send_data &&
-            (DMA2_Stream7->CR & DMA_SxCR_EN) == 0 &&
+        TIM3->SR &= ~TIM_SR_UIF;
+        if ((DMA2_Stream7->CR & DMA_SxCR_EN) == 0 &&
             (DMA2->HISR & DMA_HISR_TCIF7) == 0)
         {
-            if(needs_adc_start) {
-                adc_restart(RESAMPLING*2, (uint32_t)measurements);
-                needs_adc_start = 0;
-            }
 
             IRQunprotect(prot_level);
             uint16_t adc_val_temp = 0;
@@ -234,8 +239,27 @@ int main()
         {
             IRQunprotect(prot_level);
         }
-        // todo change this to counter interruption
-        Delay(1000000);
+    }
+}
+
+int main()
+{
+    NVIC_SetPriorityGrouping(3);
+    timer_init();
+    calibration_init();
+    calibration_retrieve_polynomial(coeff);
+    adc_run(RESAMPLING * 2, (uint32_t)measurements);
+    dma_priority = bluetooth_run(&dma_in);
+
+    while (1)
+    {
+        if (needs_adc_start)
+        {
+            // this is blocking so we are doing it in the main thread
+            adc_restart(RESAMPLING * 2, (uint32_t)measurements);
+            needs_adc_start = 0;
+        }
+        __WFI();
     }
 
     return 1;
