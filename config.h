@@ -7,8 +7,7 @@
 #define StartCalibrationCode -7
 #define EndCalibrationCode -8
 #define TareCode -9
-#define MaxCode -2
-#define MinCode -8
+#define RequestADCValCode -10
 
 
 #define OUT_MSG_LEN 6
