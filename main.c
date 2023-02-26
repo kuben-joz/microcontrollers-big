@@ -1,0 +1,242 @@
+#include <gpio.h>
+#include <stm32.h>
+#include <string.h>
+#include <irq.h>
+#include "buffer.h"
+#include "adc.h"
+#include "delay.h"
+#include "config.h"
+#include "bluetooth.h"
+#include "calibration.h"
+
+// ***************** Misc ******************************
+
+#define HSI_HZ 16000000U
+
+#define PCLK1_HZ HSI_HZ
+
+#define BAUD_RATE 38400U
+
+int in_size = 0;
+buffer out_buff;
+
+char dma_out[OUT_MSG_LEN] = {};
+
+char dma_in;
+
+uint16_t measurements[RESAMPLING * 2];
+
+int send_data = 0;
+
+int needs_adc_start = 0;
+
+// todo back to float
+float tare = 0;
+
+int needs_tare = 0;
+
+// todo back to float
+float average_weight = 0;
+
+int weight_send = 0;
+
+float coeff[3];
+
+// ***************** Code *********************************
+
+void startMeasurements()
+{
+    if (!send_data)
+    {
+        send_data = 1;
+        //adc_restart(RESAMPLING * 2, (uint32_t)measurements);
+        needs_adc_start = 1;
+    }
+}
+
+void stopMeasurements()
+{
+    if (send_data)
+    {
+        send_data = 0;
+        adc_stop();
+    }
+}
+
+void startCalibration()
+{
+    coeff[0] = 159.649273;
+    coeff[1] = -0.0689190815;
+    coeff[2] = 0.0;
+    calibration_store_polynomial(coeff);
+}
+
+void endCalibration()
+{
+}
+
+void setNewMessage(int button_code, int new_state_code, char *msg)
+{
+}
+
+void handleOutput(uint32_t but_changed, uint32_t new_state)
+{
+}
+
+void handleInput(char command)
+{
+    switch ((int8_t)command)
+    {
+    case StartMeasurementsCode:
+        startMeasurements();
+        break;
+    case StopMeasurementsCode:
+        stopMeasurements();
+        break;
+    case StartCalibrationCode:
+        startCalibration();
+        break;
+    case EndCalibrationCode:
+        endCalibration();
+        break;
+    case TareCode:
+        needs_tare = 1;
+        break;
+    }
+}
+
+// after send
+void DMA2_Stream7_IRQHandler()
+{
+    /* Odczytaj zgłoszone przerwania DMA1. */
+    uint32_t isr = DMA2->HISR;
+    if (isr & DMA_HISR_TCIF7)
+    {
+        DMA2->HIFCR = DMA_HIFCR_CTCIF7;
+        if (weight_send)
+        {
+            weight_send = 0;
+            average_weight -= tare;
+            char *weight_val = (char *)&average_weight;
+            dma_out[0] = WeightValCode;
+            for (int i = 1; i < 5; i++)
+            {
+                dma_out[5 - i] = weight_val[i - 1];
+            }
+            dma_out[5] = 0;
+            DMA2_Stream7->M0AR = (uint32_t)dma_out;
+            DMA2_Stream7->NDTR = OUT_MSG_LEN;
+            DMA2_Stream7->CR |= DMA_SxCR_EN;
+        }
+    }
+}
+
+// after recieve
+void DMA2_Stream5_IRQHandler()
+{
+    uint32_t isr = DMA2->HISR;
+    if (isr & DMA_HISR_TCIF5)
+    {
+        /* Obsłuż zakończenie transferu
+        w strumieniu 5. */
+        DMA2->HIFCR = DMA_HIFCR_CTCIF5;
+        handleInput(dma_in);
+        /* Ponownie uaktywnij odbieranie. */
+        DMA2_Stream5->M0AR = (uint32_t)&dma_in;
+        DMA2_Stream5->NDTR = 1;
+        DMA2_Stream5->CR |= DMA_SxCR_EN;
+    }
+}
+
+int timer_init() {
+    RCC->APB1ENR |= RCC_APB1ENR_TIM3EN;
+    TIM3->CR1 |= TIM_CR1_URS; //only update on overflow, we are counting up
+    TIM3->CR1 &= ~TIM_CR1_DIR; //counting up
+    TIM3->PSC = 16000UL; // 1000hz
+    TIM3->ARR = 0UL; // start at 0
+    TIM3->EGR |= TIM_EGR_UG;
+
+
+
+
+    TIM3->CR1 |= TIM_CR1_CEN;
+    return 0;
+}
+
+int timer_enable() {
+
+}
+
+int timer_disable() {
+
+}
+
+int main()
+{
+
+    timer_init();
+
+    calibration_init();
+    calibration_retrieve_polynomial(coeff);
+    adc_run(RESAMPLING * 2, (uint32_t)measurements);
+    uint32_t dma_priority = bluetooth_run(&dma_in);
+
+    while (1)
+    {
+
+        // todo disable interrupts for recieveing button inputs
+        irq_level_t prot_level = IRQprotect(dma_priority);
+        if (send_data &&
+            (DMA2_Stream7->CR & DMA_SxCR_EN) == 0 &&
+            (DMA2->HISR & DMA_HISR_TCIF7) == 0)
+        {
+            if(needs_adc_start) {
+                adc_restart(RESAMPLING*2, (uint32_t)measurements);
+                needs_adc_start = 0;
+            }
+
+            IRQunprotect(prot_level);
+            uint16_t adc_val_temp = 0;
+            uint16_t adc_val_weight = 0;
+            for (int i = 0; i < RESAMPLING; i++)
+            {
+                adc_val_temp += measurements[2 * i];
+                adc_val_weight += measurements[2 * i + 1];
+            }
+            adc_val_temp /= RESAMPLING;
+            adc_val_weight /= RESAMPLING;
+            // todo change back
+            // float average_temp = adc_calculate_temp(adc_val_temp);
+            float average_temp = coeff[0];
+            average_temp += coeff[1] * adc_val_temp;
+            adc_val_temp = adc_val_temp * adc_val_temp;
+            average_temp += coeff[2] * adc_val_temp;
+            average_weight = adc_val_weight;
+            if (needs_tare)
+            {
+                tare = average_weight;
+                needs_tare = 0;
+            }
+            // todo change tare to be on weight not temp
+            weight_send = 1;
+            char *temp_val = (char *)&average_temp;
+            dma_out[0] = TempValCode;
+            for (int i = 1; i < 5; i++)
+            {
+                dma_out[5 - i] = temp_val[i - 1];
+            }
+            dma_out[5] = 0;
+            DMA2_Stream7->M0AR = (uint32_t)dma_out;
+            DMA2_Stream7->NDTR = OUT_MSG_LEN;
+            DMA2_Stream7->CR |= DMA_SxCR_EN;
+        }
+        else
+        {
+            IRQunprotect(prot_level);
+        }
+        // todo change this to counter interruption
+        Delay(1000000);
+    }
+
+    return 1;
+}

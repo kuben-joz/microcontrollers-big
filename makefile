@@ -10,8 +10,8 @@ CFLAGS = $(FLAGS) -Wall -g  \
 LDFLAGS = $(FLAGS) -Wl,--gc-sections -nostartfiles \
 -L/home/jakub/Documents/microcontrollers/stm32/lds -Tstm32f411re.lds
 vpath %.c /home/jakub/Documents/microcontrollers/stm32/src
-OBJECTS = adc.o gpio.o adc.o delay.o startup_stm32_fpu.o uart_main.o
-TARGET = adc
+OBJECTS = adc.o gpio.o adc.o delay.o startup_stm32_fpu.o main.o buffer.o bluetooth.o calibration.o
+TARGET = bluetooth_scale
 .SECONDARY: $(TARGET).elf $(OBJECTS)
 all: $(TARGET).bin
 %.elf : $(OBJECTS)
